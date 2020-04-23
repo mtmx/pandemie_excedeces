@@ -1,0 +1,1006 @@
+---
+title: "pandemie"
+author: "MG"
+date: "20/04/2020"
+output: html_document
+---
+ 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# download fichier deces
+
+library(tidyverse)
+library(data.table)
+library(stringi)
+library(stringr)
+library(lubridate)
+library(sf)
+library(hrbrthemes)
+library(cartogram)
+library(scales)
+library(COGugaison)
+library(areal)
+library(migR)
+library(geofacet)
+
+# mailles admin
+
+# library(CARTElette)
+# COMM_FRMETDOM_2016 <- charger_carte(COG=2016,nivsupra="COM")
+# DEP_FRMETDOM_2016 <- charger_carte(COG=2016,nivsupra="DEP")
+# library(rmapshaper)
+# DEP_FRMETDOM_2016.s <- DEP_FRMETDOM_2016 %>% ms_simplify(keep = 0.02)
+
+# fichier décès insee
+tmp <- tempdir()
+# remove double slash
+tmp <- str_replace_all(tmp,"//","/")
+
+if (dir.exists(paste0(tmp,"/2020-04-17_detail"))) {
+  insee_deces <- fread( paste0(tmp, "/2020-04-17_detail/DC_Jan-Avr_2018-2020_det.csv"))
+  
+} else {
+  download.file("https://www.insee.fr/fr/statistiques/fichier/4470857/2020-04-17_detail.zip",paste0(tmp,"/2020-04-17_detail.zip"))
+  unzip(paste0(tmp,"/2020-04-17_detail.zip"), exdir = paste0(tmp,"/2020-04-17_detail")) # unzip files
+  file.remove(paste0(tmp,"/2020-04-17_detail.zip")) # tidy up by removing the zip file
+  insee_deces <- fread( paste0(tmp, "/2020-04-17_detail/DC_Jan-Avr_2018-2020_det.csv"))
+  
+}
+
+# format date
+insee_deces <- insee_deces %>%
+  mutate(MDEC = str_pad(MDEC, width = 2,side = "left", pad = "0"),
+         JDEC = str_pad(JDEC, width = 2,side = "left", pad = "0")) %>%
+  mutate(MNAIS = str_pad(MNAIS, width = 2,side = "left", pad = "0"),
+         JNAIS = str_pad(JNAIS, width = 2,side = "left", pad = "0")) %>%
+  mutate(date_deces_fmt = as.Date(paste(ADEC,"-",MDEC,"-",JDEC,sep=""),"%Y-%m-%d")) %>%
+  mutate(date_naissance_fmt = as.Date(paste(ANAIS,"-",MNAIS,"-",JNAIS,sep=""),"%Y-%m-%d"))  %>%
+  as.data.frame()  %>% 
+  mutate(age = as.numeric(ADEC) - as.numeric(ANAIS))
+
+```
+
+#### Méthodo
+
+* [Analyse de l'Insee](https://www.insee.fr/fr/information/4470857)
+* [Fichier de données individuelles publiées par l'Insee](https://www.insee.fr/fr/statistiques/fichier/4470857/2020-04-17_detail.zip)
+* [Modélisation de l'excédent de décès](https://statisfaction.wordpress.com/2020/04/12/a-quick-preliminary-study-of-covid-death-under-reporting-in-france/)
+* [Code des graphiques et stats qui suivent](https://github.com/mtmx/pandemie_excedeces)
+
+
+
+Comme dans l'analyse de l'Insee l'idée globale de ce qui suit est donc une __analyse de l'excédent de décès pendant la pandémie de Covid-19__ : on compare le nombre de décès du 1er mars au 6 avril des années précédentes (2018 et 2019) au nombre de décès du 1er mars au 6 avril 2020.
+__On ne peut donc pas conclure directement que ces décès sont des malades du Covid-19.__
+
+
+Les alertes méthodologiques de l'Insee :
+
+* Les chiffres sont provisoires et seront révisés dans les prochaines semaines (délai de transmissions à l'Insee variables)
+* Entre mi-mars et fin mars, la mairie de Marseille a fait face à des problèmes techniques ayant affecté ses transmissions à l’Insee. Le nombre de décès y est donc largement sous-valorisé
+
+
+
+
+### Profil age/sexe
+
+On compare les décès de cette année (1er mars - 6 avril) à ceux des années précédents sur la même période.
+En foncé on distingue donc l'excédent des décès pendant cette période de pandémie (versus les années précédentes) :
+
+```{r pyramide_1, echo=F, message=F, warning=F,fig.height=8,fig.width=8 }
+
+cpt_sexe_age_2019 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  group_by(SEXE, age ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(nb = nb /2)
+  
+cpt_sexe_age_2020 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  group_by(SEXE, age ) %>%
+  summarize(nb = sum(cpt) )
+
+cpt_sexe_age <- cpt_sexe_age_2020 %>% mutate(annee = 2020) %>%
+  rbind.data.frame(cpt_sexe_age_2019 %>% mutate(annee = 2019)) %>%
+  as.data.frame()
+
+
+ggplot() +
+  # 2020
+  geom_bar(data = cpt_sexe_age %>%
+             filter(SEXE == "F", annee == 2020) %>%
+             arrange(rev(age)) ,
+           aes(x = age, y = nb, fill = annee) ,
+           fill = "#bc4b27",
+           stat = "identity",
+           position = "identity") +
+  geom_bar(data = cpt_sexe_age %>%
+             filter(SEXE == "M", annee == 2020) %>%
+             arrange(rev(age)),
+           aes(x = age, y = -nb, fill = annee) ,
+           stat = "identity",
+           fill = "#51716a",
+           position = "identity") +
+  # 2019
+  geom_bar(data = cpt_sexe_age %>%
+             filter(SEXE == "F", annee == 2019) %>%
+             arrange(rev(age)) ,
+           aes(x = age, y = nb, fill = annee) ,
+           fill = "#f5ae98",
+           # alpha = 0.3,
+           # color = "#bb8a9a",
+           # stroke = 0.01,
+           stat = "identity",
+           position = "identity") +
+  geom_bar(data = cpt_sexe_age %>%
+             filter(SEXE == "M", annee == 2019) %>%
+             arrange(rev(age)),
+           aes(x = age, y = -nb, fill = annee) ,
+           stat = "identity",
+           # alpha = 0.3,
+           # stroke = 0.01,
+           # color = "#bb8a9a",
+           fill = "#acc7c1",
+           position = "identity") +
+  coord_flip() +
+  scale_x_continuous(name = "Age",
+                     limits = c(0, 110),
+                     breaks = seq(0,100,10) ,
+                       labels = function(x) format(x, big.mark = ",", scientific = FALSE)) +
+  scale_y_continuous(name = "",
+                     limits = c(-2000, 2000),
+                     breaks = seq(-2000,2000,400) ,
+                     #labels = function(x) format(x, big.mark = " ", scientific = FALSE),
+                     labels = c(seq(2000,0,-400),seq(400,2000,400)) ) +
+  # legende hommes / femmes
+   annotate("text", y = -1000, x = 10,
+            label = "Hommes" , color="black",
+            size=7 , angle=0, fontface="bold") +
+  annotate("text", y = 1000, x = 10,
+           label = "Femmes" , color="black",
+           size=7 , angle=0, fontface="bold") +
+  # legende  femmes stats 2019
+  annotate("text", y = 500, x = 40,
+           label = "Nombre de décès\nentre le 1er mars\net le 6 avril\n(moyenne 2018-2019)" , 
+           color="#f5ae98",
+           size=3.5 , angle=0, fontface="bold") +
+  # legende hommes  stats 2019
+  annotate("text", y = -500, x = 40,
+           label = "Nombre de décès\nentre le 1er mars\net le 6 avril\n(moyenne 2018-2019)" , 
+           color="#acc7c1",
+           size=3.5 , angle=0, fontface="bold") +
+  # legende  femmes stats 2020
+  annotate("text", y = 1600, x = 108,
+           label = "Nombre de décès\nentre le 1er mars\net le 6 avril 2020" , 
+           color="#bc4b27",
+           size=4.5 , angle=0, fontface="bold") +
+  # legende hommes  stats 2020
+  annotate("text", y = -1600, x = 100,
+           label = "Nombre de décès\nentre le 1er mars\net le 6 avril 2020" , 
+           color="#51716a",
+           size=4.5 , angle=0, fontface="bold") +
+  geom_hline(yintercept = 0) +
+  theme_ipsum() +
+  labs(
+    title = "Pyramide des âges des personnes décédées",
+    subtitle = "Nombre de décès du 1er mars au 6 avril (moyenne 2018 et 2019)\net nombre de décès pendant la même période en 2020.",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) +
+  theme(legend.position = c(0.95,0.5)) 
+
+
+
+```
+
+
+Ci-dessous uniquement l'excédent (ou le déficit pour les classes d'âge jeunes) de décès pendant cette période de pandémie, c'est à dire ce qui était en couleur foncée dans le premier graphique :
+
+```{r evol_agesexe, echo=F, message=F, warning=F,fig.height=6,fig.width=8}
+
+
+####################
+#####@ taux d'évolution par age / sexe
+
+cpt_sexe_age.evol <- cpt_sexe_age %>%
+  pivot_wider(names_from = annee,
+              values_from = nb,
+              names_prefix = "nb_") %>%
+  # regroupement par tranche de 5 ans
+  mutate(age_quinq = cut(age, c(seq(0,100,5),115),  include.lowest = TRUE)) %>%
+  mutate(nb_2019 = replace_na(nb_2019, 0),
+         nb_2020 = replace_na(nb_2020, 0)) %>%
+  group_by(age_quinq, SEXE) %>%
+  summarise(nb_2019 = sum(nb_2019),
+            nb_2020 = sum(nb_2020)) %>%
+  mutate(diff_nb = nb_2020 - nb_2019) %>%
+  mutate(ratio_nb = nb_2020 / nb_2019,
+         taux_evol = ((nb_2020-nb_2019) / nb_2019)*100,
+         ratio_nb_0 = ratio_nb - 1) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "=")) 
+
+
+ggplot() +
+  # 2020
+  geom_bar(data = cpt_sexe_age.evol %>%
+             filter(SEXE == "F") %>%
+             arrange(rev(age_quinq)) ,
+           aes(x = age_quinq, y = nb_2020, fill = taux_evol) ,
+           #fill = "#7a1e3d",
+           stat = "identity",
+           position = "identity") +
+  geom_bar(data = cpt_sexe_age.evol %>%
+             filter(SEXE == "M") %>%
+             arrange(rev(age_quinq)),
+           aes(x = age_quinq, y = -nb_2020, fill = taux_evol) ,
+           stat = "identity",
+           #fill = "#113e9d",
+           position = "identity") +
+
+  coord_flip() +
+  scale_fill_gradientn(
+    labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+    name ="Différence en\npourcentage de décès",
+    #labels = function(x) format(x, big.mark = " ",scientific = FALSE),
+    colors=c("#509ac7","white","#A50F15"),
+    breaks= c(-35,-30,-20,-10,0,10,20,30,35,Inf),
+    #labels = c('--','-','=','+','++'),
+    #values=rescale(c(-6000000,-800000,0,800000,4000000)),
+    limits=c(-35,35)
+  ) +
+  scale_x_discrete(name = "Tranche d'âge quinquennal",
+                   expand = c(0,0),
+                     #limits = c(0, 110),
+                     #breaks = seq(0,100,10) ,
+                     labels = c(paste0(seq(0,95,5),"-",seq(5,100,5)), "> 100")) +
+  scale_y_continuous(name = "Différence en nombre de décès",
+                     limits = c(-8500, 8500),
+                     expand = c(0,0),
+                     labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x),
+                     #labels = c(seq(-8500,0,-1000),seq(1000,8500,1000))
+                     breaks = seq(-8000,8000,1000) 
+                     #labels = function(x) format(x, big.mark = " ", scientific = FALSE),
+                      ) +
+  
+  # legende hommes / femmes
+  annotate("text", y = -4000, x = 3,
+           label = "Hommes" , color="black",
+           size=7 , angle=0, fontface="bold") +
+  annotate("text", y = 4000, x = 3,
+           label = "Femmes" , color="black",
+           size=7 , angle=0, fontface="bold") +
+ 
+  geom_hline(yintercept = 0) +
+  theme_ipsum() +
+  labs(
+    title = "Différentiel des décès pendant la pandémie Covid-19",
+    subtitle = "Delta entre le nombre de décès du 1er mars au 6 avril (moyenne 2018 et 2019)\net le nombre de décès pendant la même période en 2020.",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) +
+  theme(legend.position = c(0.95,0.5)) 
+
+```
+
+
+### Localisation des décès au niveau départemental
+
+```{r carte_dep, echo=F, message=F, warning=F,fig.height=8,fig.width=10 }
+
+
+DEP_DEC_DOM_deces <- insee_deces %>% 
+  as.data.frame() %>%
+  mutate( annee =  case_when(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d") ~ "2020",
+                             date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d") ~ "2019", TRUE ~ "NA")) %>%
+  mutate(annee = as.numeric(annee)) %>% filter(!is.na(annee)) %>% filter(!annee %in% 'NA') %>%
+  mutate(cpt = 1) %>%
+  rename(DEP = DEPDEC) %>%
+  group_by(DEP, annee ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(nb = case_when(annee == 2019 ~ nb /2, TRUE ~ nb)) %>%
+    pivot_wider(names_from = annee,
+              values_from = nb,
+              names_prefix = "nb_") %>%
+  mutate(nb_2019 = replace_na(nb_2019, 0),
+         nb_2020 = replace_na(nb_2020, 0)) %>%
+  mutate(diff_nb = nb_2020 - nb_2019,
+         taux_evol = ((nb_2020-nb_2019) / nb_2019)*100) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "=")) %>%
+  mutate(type_dep = "Au département de décès") %>%
+  rbind.data.frame(insee_deces %>% 
+  as.data.frame() %>%
+  mutate( annee =  case_when(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d") ~ "2020",
+                             date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d") ~ "2019", TRUE ~ "NA")) %>%
+  mutate(annee = as.numeric(annee)) %>% filter(!is.na(annee)) %>% filter(!annee %in% 'NA') %>%
+  mutate(cpt = 1) %>%
+  rename(DEP = DEPDOM) %>%
+  group_by(DEP, annee ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(nb = case_when(annee == 2019 ~ nb /2, TRUE ~ nb)) %>%
+  pivot_wider(names_from = annee,
+              values_from = nb,
+              names_prefix = "nb_") %>%
+  mutate(nb_2019 = replace_na(nb_2019, 0),
+         nb_2020 = replace_na(nb_2020, 0)) %>%
+  mutate(diff_nb = nb_2020 - nb_2019,
+  taux_evol = ((nb_2020-nb_2019) / nb_2019)*100) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "=")) %>%
+  mutate(type_dep = "Au département de domicile") )
+
+DEP_DEC_DOM_deces.xy <-
+DEP_FRMETDOM_2016 %>%
+  full_join(DEP_DEC_DOM_deces, by = "DEP") %>%
+  filter(!DEP %in% c('977','978','986','987','988','99')) %>%
+  st_centroid(., of_largest_polygon = TRUE) 
+
+
+DEP_DEC_DOM_deces.xy.dor <- 
+  DEP_DEC_DOM_deces.xy %>%
+  filter(type_dep %in% "Au département de domicile") %>%
+  cartogram_dorling(. , 
+                    k = 0.3,
+                    m_weight = 0.2,
+                    itermax = 100,
+                    "diff_nb_abs") %>%
+  rbind.data.frame(DEP_DEC_DOM_deces.xy %>%
+                     filter(type_dep %in% "Au département de décès") %>%
+                     cartogram_dorling(. , 
+                                       k = 0.3,
+                                       m_weight = 0.2,
+                                       itermax = 100,
+                                       "diff_nb_abs") )
+######
+## carto département
+
+# dorling 
+
+DEP_DEC_DOM_deces.xy.dor.ctr <- DEP_DEC_DOM_deces.xy.dor  %>%
+  mutate(x_ctr = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         y_ctr = map_dbl(geometry, ~st_centroid(.x)[[2]])) %>% 
+  st_drop_geometry() %>%
+  as.data.frame() 
+
+
+
+
+
+ggplot() +
+  geom_sf(data = DEP_FRMETDOM_2016.s, 
+          fill="grey92", color = "grey80", lwd = 0.3 ) +
+  geom_point(data = DEP_DEC_DOM_deces.xy.dor.ctr  ,
+             aes(x= x_ctr, y = y_ctr,
+                 size = diff_nb_abs,
+                 fill = taux_evol),
+             color = "white",
+             stroke = 0.3,
+             shape = 21,
+             show.legend = TRUE) +
+  # etiquettes departement
+  geom_text(data = DEP_DEC_DOM_deces.xy.dor.ctr  ,
+            aes(x= x_ctr, y = y_ctr,
+                size = diff_nb_abs / 10,
+                label = DEP),
+            color = "black",
+            show.legend = FALSE,
+            fontface = "bold") +
+  scale_fill_gradientn(
+    labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+    name ="Différence en pourcentage de décès",
+    #labels = function(x) format(x, big.mark = " ",scientific = FALSE),
+    colors=c("#509ac7","white","#e3040d"),
+    breaks= c(-25,0,50,100),
+    values=rescale(c(-25,-15,0,50,100)),
+    limits=c(-35,135)
+  ) +
+  scale_size_continuous(
+    name ="Différence en nombre de décès",
+    breaks = c(100,500,1000),
+    labels = function(x) format(x, big.mark = " ",scientific = FALSE),
+    range = c(0.5,8.5)) +
+  scale_x_continuous(expand = c(0,0), name = "") +
+  scale_y_continuous(expand = c(0,0), name = "") +
+  theme_ipsum() +
+  theme(axis.text = element_blank(), axis.title  = element_blank(), axis.ticks  = element_blank()) +
+  labs(
+    title = "Différentiel de décès pendant la pandémie Covid-19",
+    subtitle = "Delta entre le nombre de décès du 1er mars au 6 avril (moyenne 2018 et 2019)\net le nombre de décès pendant la même période en 2020.",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) +
+  #zoom
+  theme(#legend.position = c(1,0.65),
+        legend.position = "bottom", legend.direction = "horizontal",
+        legend.background = element_rect(fill = "grey92", color = "grey85", size = 0.2)) +
+  coord_sf(crs = st_crs(2154), datum = NA) +
+  facet_wrap(~ type_dep, nrow = 1)
+
+
+```
+
+
+```{r carte_dep_flux, echo=F, message=F, warning=F,fig.height=9,fig.width=10 }
+
+DEP_FRMETDOM_2016.ctr <-
+  DEP_FRMETDOM_2016 %>%
+  mutate(x_ctr = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         y_ctr = map_dbl(geometry, ~st_centroid(.x)[[2]])) %>%
+  st_drop_geometry()
+
+cpt_flux_dom_deces_2020 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  group_by(DEPDEC,DEPDOM ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(diff = case_when(DEPDEC != DEPDOM ~ "diff", TRUE ~ "idem")) 
+  
+  
+  cpt_flux_dom_deces_2019 <- insee_deces %>% as.data.frame() %>%
+    filter(date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d")) %>%
+    mutate(cpt = 1) %>%
+    group_by(DEPDEC,DEPDOM ) %>%
+    summarize(nb = sum(cpt) ) %>%
+    mutate(diff = case_when(DEPDEC != DEPDOM ~ "diff", TRUE ~ "idem")) %>%
+    mutate(nb = nb /2)
+  
+  
+  cpt_flux_dom_deces <- cpt_flux_dom_deces_2020 %>% mutate(annee = 2020) %>%
+    rbind.data.frame(cpt_flux_dom_deces_2019 %>% mutate(annee = 2019)) %>%
+    as.data.frame()
+
+  
+  
+  cpt_flux_dom_deces.evol <- cpt_flux_dom_deces %>%
+    pivot_wider(names_from = annee,
+                values_from = nb,
+                names_prefix = "nb_") %>%
+    mutate(nb_2019 = replace_na(nb_2019, 0),
+           nb_2020 = replace_na(nb_2020, 0)) %>%
+    mutate(diff_nb = nb_2020 - nb_2019) %>%
+    mutate(ratio_nb = nb_2020 / nb_2019,
+           taux_evol = ((nb_2020-nb_2019) / nb_2019)*100,
+           ratio_nb_0 = ratio_nb - 1) %>%
+    mutate(diff_nb_abs = abs(diff_nb)) %>%
+    mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "=")) 
+  
+  
+  cpt_flux_dom_deces.evol.geo <- 
+    cpt_flux_dom_deces.evol %>%
+  left_join(DEP_FRMETDOM_2016.ctr %>% as.data.frame() %>% select(DEP,x_ctr,y_ctr) %>% rename(x_DEPDEC = x_ctr,y_DEPDEC = y_ctr),
+            by = c("DEPDEC"= "DEP")) %>%
+    left_join(DEP_FRMETDOM_2016.ctr %>% as.data.frame() %>% select(DEP,x_ctr,y_ctr) %>% rename(x_DEPDOM = x_ctr,y_DEPDOM = y_ctr),
+              by = c("DEPDOM"= "DEP")) %>%
+    filter(diff %in% 'diff')
+  
+
+ 
+  gg_flux_f <-
+ggplot() +
+  geom_sf(data =DEP_FRMETDOM_2016.s, 
+          color = "grey80") +
+  geom_curve(data=cpt_flux_dom_deces.evol.geo %>%
+               filter(nb_2020 >10),
+             aes(x=x_DEPDOM,
+                 y=y_DEPDOM,
+                 xend=x_DEPDEC, 
+                 yend=y_DEPDEC,
+                 size=nb_2020,   
+                 #alpha=nb_ind, 
+                 color =taux_evol),
+             alpha = 1,
+             arrow = arrow(length = unit(0.03, "npc")),
+             curvature = 0.2#,arrow = arrow(length = unit(0.03, "npc"))
+  ) +
+  scale_size(name="Nombre de flux\ndomicile -> décès\ndu 1er mars au 6 avril 2020",
+             range = c(0.5,5)) +
+  scale_color_gradientn(
+    labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+    name ="Différence en\npourcentage de décès",
+    colors=c("#509ac7","white","#e3040d"),
+    breaks= c(-25,0,50,100),
+    values=rescale(c(-25,-15,0,50,100)),
+    limits=c(-50,300)
+  ) +
+  coord_sf(crs = 2154, datum = NA) +
+  theme_ipsum() +
+    theme(legend.position = c(0.8,0.35)) +
+    scale_x_continuous(name = "") +
+    scale_y_continuous(name = "") +
+  labs(
+    title = "Flux de décès entre département de domicile et département de décès pendant la pandémie Covid-19",
+    subtitle = "Et différence relative de ces flux vs la période du 1er mars au 6 avril des années précédentes (moyenne 2018 et 2019)",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) 
+
+
+bbox_IDF <- DEP_FRMETDOM_2016.s %>%
+  filter(DEP %in% c('75')) %>%
+  st_buffer(dist = 40000) %>%
+  st_bbox()
+
+gg_flux_idf = ggplot() +
+  geom_sf(data =DEP_FRMETDOM_2016.s, 
+          color = "grey80") +
+  geom_curve(data=cpt_flux_dom_deces.evol.geo %>%
+               filter(nb_2020 >10),
+             aes(x=x_DEPDOM,
+                 y=y_DEPDOM,
+                 xend=x_DEPDEC, 
+                 yend=y_DEPDEC,
+                 size=nb_2020,   
+                 color =taux_evol),
+             alpha = 0.9,
+             arrow = arrow(length = unit(0.03, "npc")),
+             curvature = 0.2#,arrow = arrow(length = unit(0.03, "npc"))
+  ) +
+  scale_size(name="nb",
+             range = c(0.5,7)) +
+  scale_color_gradientn(
+    labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+    name ="Différence en pourcentage de décès",
+    colors=c("#509ac7","white","#e3040d"),
+    breaks= c(-25,0,50,100),
+    values=rescale(c(-25,-15,0,50,100)),
+    limits=c(-55,300)
+  ) +
+  coord_sf(crs = 2154, datum = NA) +
+  scale_x_continuous(name = "",
+                     limits = c(bbox_IDF$xmin %>% as.vector(),bbox_IDF$xmax %>% as.vector())) +
+  scale_y_continuous(name = "",
+                     limits = c(bbox_IDF$ymin %>% as.vector(),bbox_IDF$ymax %>% as.vector())) +
+  theme_ipsum() +
+  theme(legend.position = "none")
+
+
+library(cowplot)
+gg_inset_map1 = ggdraw() +
+  draw_plot(gg_flux_f) +
+  draw_plot(gg_flux_idf, x = 0.6, y = 0.6, width = 0.3, height = 0.3)
+gg_inset_map1
+
+```
+
+
+
+
+
+
+### Localisation des décès au niveau local 
+
+
+```{r carte_grid, echo=F, message=F, warning=F,fig.height=10,fig.width=10}
+
+##### stats communales
+
+COMM_deces_2019 <- insee_deces %>% 
+  as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  mutate(COMDEC = case_when(substr(COMDEC,1,2) %in% '75' ~ "75056",
+                            substr(COMDEC,1,3) %in% '132' ~ "13055",
+                            substr(COMDEC,1,4) %in% '6938' ~ "69123",
+                            TRUE ~ COMDEC)) %>%
+  group_by(COMDEC ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(nb = nb /2)
+
+
+COMM_deces_2020 <- insee_deces %>% 
+  as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  mutate(COMDEC = case_when(substr(COMDEC,1,2) %in% '75' ~ "75056",
+                            substr(COMDEC,1,3) %in% '132' ~ "13055",
+                            substr(COMDEC,1,4) %in% '6938' ~ "69123",
+                            TRUE ~ COMDEC)) %>%
+  group_by(COMDEC ) %>%
+  summarize(nb = sum(cpt) )
+
+
+COMM_deces <-
+  table_supracom_2016 %>%
+  left_join(COMM_deces_2020 %>%
+              rename(nb_2020 = nb), by = c("CODGEO" = "COMDEC"))%>%
+  left_join(COMM_deces_2019 %>%
+              rename(nb_2019 = nb), by = c("CODGEO" = "COMDEC")) %>%
+  mutate(diff_nb = nb_2020 - nb_2019) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "="))   
+
+
+# grille
+# version hex
+fr_grid.hex <- COMM_FRMETDOM_2016 %>% 
+  st_make_grid(n = 60,square = FALSE)
+fr_grid.hex <- fr_grid.hex %>% st_sf() %>% mutate(id = row_number()) %>%
+  mutate(surface = st_area(.), surface = as.numeric(surface)/1000000)
+
+##### interpolation via areal
+
+fr_grid.hex_stats.sf <- COMM_FRMETDOM_2016 %>%
+  select(INSEE_COM ,NOM_COM) %>%
+  left_join(COMM_deces ,
+            by = c("INSEE_COM" = "CODGEO")) %>%
+  mutate(nb_2020 = replace_na(nb_2020, 0),
+         nb_2019 = replace_na(nb_2019, 0)) %>%
+  select(nb_2020, nb_2019) %>%
+  st_interpolate_aw(to = fr_grid.hex, extensive = TRUE) 
+
+fr_grid.hex_stats.sf <- fr_grid.hex_stats.sf %>% 
+  mutate(diff_nb = nb_2020 - nb_2019) %>%
+  mutate(ratio_nb = nb_2020 / nb_2019,
+         taux_evol = ((nb_2020-nb_2019) / nb_2019)*100,
+         ratio_nb_0 = ratio_nb - 1) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "="))
+
+fr_grid.hex_stats.fr <- st_intersection(fr_grid.hex_stats.sf,
+                                        DEP_FRMETDOM_2016 %>% summarise()) 
+
+# centroides xy sf
+fr_grid.hex_stats.xy <- fr_grid.hex_stats.fr %>%
+  st_centroid(.,of_largest_polygon = T)
+
+fr_grid.hex_stats.xy <- fr_grid.hex_stats.xy %>%
+  mutate(taux_evol =  case_when(is.nan(taux_evol) ~ 0, is.infinite(taux_evol) ~ 20000, TRUE ~ taux_evol))
+
+### dorling
+
+fr_grid.hex_stats.xy.dor <- cartogram_dorling(fr_grid.hex_stats.xy , 
+                                              k = 0.3,
+                                              m_weight = 0.2,
+                                               itermax = 100,
+                                               "diff_nb_abs")
+
+fr_grid.hex_stats.xy.dor.ctr <- fr_grid.hex_stats.xy.dor  %>%
+  mutate(x_ctr = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         y_ctr = map_dbl(geometry, ~st_centroid(.x)[[2]])) %>% 
+  st_drop_geometry() %>%
+  as.data.frame() 
+
+### carto
+
+ggplot() +
+  geom_sf(data = DEP_FRMETDOM_2016, 
+          fill="grey92", color = "grey80", lwd = 0.3 ) +
+  geom_point(data = fr_grid.hex_stats.xy.dor.ctr  %>%
+               mutate(taux_evol.cl = cut(taux_evol, c(-101,-50,0,50,100,200,300,Inf))) %>%
+               mutate(taux_evol.cl = recode_factor(taux_evol.cl, '(-101,-50]' = '< -50%', 
+                                                   '(-50,0]' = "-50% / 0%",
+                                                   '(0,50]' = "0% / +50%",
+                                           '(50,100]' = "+50% / +100%", 
+                                           '(100,200]' = "+100% / +200%", 
+                                           '(200,300]' = "+200% / +300%",
+                                           '(300,Inf]' = "> +300%")) %>%
+               mutate(taux_evol.cl = factor(taux_evol.cl, levels=c('< -50%', "-50% / 0%","0% / +50%","+50% / +100%","+100% / +200%","+200% / +300%","> +300%"))) ,
+          aes(x= x_ctr, y = y_ctr,
+              size = diff_nb_abs,
+              fill = taux_evol.cl),
+          color = "white",
+          stroke = 0.3,
+          shape = 21,
+          show.legend = TRUE) +
+scale_fill_manual( name = "Différence en\npourcentage de décès",
+                   values = c("#509ac7", 
+                              "#a6bddb",
+                              "#fcbba1",
+                              "#fc9272",
+                              "#fb6a4a",
+                              "#de2d26",
+                              "#a50f15")) +
+  scale_size_continuous(#trans = "sqrt", 
+    name ="Différence en\nnombre de décès",
+    breaks = c(100,500,1000),
+    labels = function(x) format(x, big.mark = " ",scientific = FALSE),
+    range = c(1,17.5)) +
+  scale_x_continuous(expand = c(0,0), name = "") +
+  scale_y_continuous(expand = c(0,0), name = "") +
+  theme_ipsum() +
+  theme(axis.text = element_blank(), axis.title  = element_blank(), axis.ticks  = element_blank()) +
+    labs(
+    title = "Différentiel de décès pendant la pandémie Covid-19",
+    subtitle = "Delta entre le nombre de décès du 1er mars au 6 avril (moyenne 2018 et 2019) versus le nombre de décès pendant la même période en 2020.
+    Localisation par commune de décès, agrégation par carreau de 30 km de côté",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) +
+  theme(legend.position = c(1,0.65),
+        legend.background = element_rect(fill = "grey92", color = "grey85", size = 0.2)) +
+  coord_sf(crs = st_crs(2154), datum = NA)
+
+```
+
+
+### Stats par commune
+
+
+```{r palmares_communes, echo=F, message=F, warning=F,fig.height=14,fig.width=8}
+
+COMM_deces.big <-
+COMM_deces %>%
+  filter(nb_2020 > 100) %>%
+  mutate(taux_evol = ((nb_2020-nb_2019) / nb_2019)*100)
+
+
+ggplot() +
+  geom_bar(data = COMM_deces.big %>%
+             mutate(LIBGEO.f = factor(LIBGEO)) %>%
+             mutate(annee = as.character(2020)) %>%
+             mutate(LIBGEO.f = fct_reorder(LIBGEO.f, nb_2020, .desc = F)),
+           aes(x = LIBGEO.f,
+               y = diff_nb,
+               fill = taux_evol) ,
+           stat = "identity",
+           color = "grey70",
+           size = 0.2,
+           position = "identity") +
+
+  # # label droite
+  geom_text(data = COMM_deces.big %>%
+              filter(diff_nb > 0) %>%
+              mutate(LIBGEO.f = factor(LIBGEO)) %>%
+              mutate(LIBGEO.f = fct_reorder(LIBGEO.f, nb_2020, .desc = F)),
+            aes(x = LIBGEO.f, y = diff_nb + 12,
+                label = LIBGEO.f) ,
+            hjust = 0,
+            fontface = "bold",
+            size = 2) +
+  # # label gauche
+  geom_text(data = COMM_deces.big %>%
+              filter(diff_nb <= 0) %>%
+              mutate(LIBGEO.f = factor(LIBGEO)) %>%
+              mutate(LIBGEO.f = fct_reorder(LIBGEO.f, nb_2020, .desc = F)),
+            aes(x = LIBGEO.f, y = diff_nb ,
+                label = LIBGEO.f) ,
+            hjust = 1.2,
+            fontface = "bold",
+            size = 2) +
+  geom_hline(yintercept = 0, color = "black", size = 0.75) +
+  coord_flip() +
+   scale_fill_gradientn(
+    labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+    name ="Différence en pourcentage de décès",
+    colors=c("#509ac7","white","#e3040d"),
+    breaks= c(-25,0,50,100),
+    values=rescale(c(-25,-15,0,50,100)),
+    limits=c(-50,200)
+  ) +
+  scale_x_discrete(name = "", expand = c(0,0)) +
+  scale_y_continuous(name = "Différence en nombre de décès",
+                     expand = c(0,0),
+                     limits = c(-600, 1100),
+                     labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x),
+                     breaks = seq(-400,1000,200),
+                     sec.axis = sec_axis(trans=~., 
+                                         name = "Différence en nombre de décès",
+                                         labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x),
+                                         breaks = seq(-400,1000,200))) +
+  theme_ipsum() +
+  labs(
+    title = "Différentiel des décès pendant la pandémie Covid-19",
+    subtitle = "Delta entre le nombre de décès du 1er mars au 6 avril (moyenne 2018 et 2019)\net le nombre de décès pendant la même période en 2020.
+    Classement par ordre décroissant du nombre de décès du 1er mars au 6 avril 2020 (communes avec plus de 100 décès).",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) +
+  theme(legend.position = c(0.8,0.5),
+        axis.text.y = element_blank(),
+        legend.background = element_rect(fill = "grey92", color = "grey85", size = 0.2),
+        legend.text = element_text(size = 12),
+        panel.grid.minor = element_blank()) 
+```
+
+
+### Evolution temporelle en France
+
+
+```{r evol_temp_fr, echo=F, message=F, warning=F,fig.height=6,fig.width=8}
+
+
+cpt_jour_20182019 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  mutate(date_deces_fmt_2020 = as.Date(paste(2020,"-",MDEC,"-",JDEC,sep=""),"%Y-%m-%d")) %>%
+  group_by(date_deces_fmt_2020 ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(nb = nb / 2)
+
+cpt_jour_2020 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  mutate(date_deces_fmt_2020 = as.Date(paste(2020,"-",MDEC,"-",JDEC,sep=""),"%Y-%m-%d")) %>%
+  group_by(date_deces_fmt_2020 ) %>%
+  summarize(nb = sum(cpt) )
+
+cpt_jour_FR <- cpt_jour_2020 %>% mutate(annee = 2020) %>%
+  rbind.data.frame(cpt_jour_20182019 %>% mutate(annee = 2019)) %>%
+  as.data.frame()
+
+cpt_jour_FR.evol <- cpt_jour_FR %>%
+  pivot_wider(names_from = annee,
+              values_from = nb,
+              names_prefix = "nb_") %>%
+  mutate(nb_2019 = replace_na(nb_2019, 0),
+         nb_2020 = replace_na(nb_2020, 0)) %>%
+  group_by(date_deces_fmt_2020) %>%
+  summarise(nb_2019 = sum(nb_2019),
+            nb_2020 = sum(nb_2020)) %>%
+  mutate(diff_nb = nb_2020 - nb_2019) %>%
+  mutate(ratio_nb = nb_2020 / nb_2019,
+         taux_evol = ((nb_2020-nb_2019) / nb_2019)*100,
+         ratio_nb_0 = ratio_nb - 1) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "="))
+
+### graphique france
+
+ggplot() +
+  geom_bar(data = cpt_jour_FR.evol  ,
+           aes(x = date_deces_fmt_2020, y = diff_nb, fill = taux_evol) ,
+           stat = "identity",
+           position = "identity") +
+  scale_fill_gradientn(
+    labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+    name ="Différence en\npourcentage de décès",
+    colors=c("#509ac7","white","#e3040d"),
+    breaks= c(-25,0,50,100),
+    values=rescale(c(-25,-15,0,30,60)),
+    limits=c(-25,60)
+  ) +
+  scale_x_date(name = "",
+               date_breaks = "7 days",
+               labels = date_format("%d/%m"),
+               date_minor_breaks = "1 day") +
+  scale_y_continuous(name = "Différence en nombre de décès",
+                     limits = c(-300, 900),
+                     expand = c(0,0),
+                     labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x),
+                     breaks = seq(-300,900,100) 
+  ) +
+  # legende hommes / femmes
+  geom_hline(yintercept = 0) +
+  theme_ipsum() +
+  labs(
+    title = "Différentiel des décès pendant la pandémie Covid-19",
+    subtitle = "Delta entre le nombre de décès par jour du 1er mars au 6 avril (moyenne 2018 et 2019)\net le nombre de décès par jour pendant la même période en 2020.",
+    caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+  ) +
+  theme(legend.position = c(0.15,0.7),
+        legend.background = element_rect(fill = "grey92", color = "grey85", size = 0.2),
+        legend.text = element_text(size = 12),
+        panel.grid.minor = element_blank()) 
+
+```
+
+
+Exemple : le 1er avril 2020 il y a eu 800 décès de plus que le 1er avril des années précédentes (moyenne 2018 et 2019), soit une augmentation de .
+
+### Evolution temporelle par région
+
+
+```{r evol_temp_reg, echo=F, message=F, warning=F,fig.height=12,fig.width=10}
+
+cpt_jour_reg_20182019 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2019-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2019-04-06", "%Y-%m-%d")|date_deces_fmt >= as.Date("2018-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2018-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  mutate(date_deces_fmt_2020 = as.Date(paste(2020,"-",MDEC,"-",JDEC,sep=""),"%Y-%m-%d")) %>%
+  ajout_nivgeo_supracomm(TABLE = . ,
+                         CODE_COMMUNE = "COMDEC",
+                         NIVGEO = "REG",
+                         COG_IN = 2016,
+                         COG_NIVGEO = 2019) %>%
+  group_by(REG, date_deces_fmt_2020 ) %>%
+  summarize(nb = sum(cpt) ) %>%
+  mutate(nb = nb / 2)
+
+cpt_jour_reg_2020 <- insee_deces %>% as.data.frame() %>%
+  filter(date_deces_fmt >= as.Date("2020-03-01", "%Y-%m-%d") & date_deces_fmt <= as.Date("2020-04-06", "%Y-%m-%d")) %>%
+  mutate(cpt = 1) %>%
+  mutate(date_deces_fmt_2020 = as.Date(paste(2020,"-",MDEC,"-",JDEC,sep=""),"%Y-%m-%d")) %>%
+  ajout_nivgeo_supracomm(TABLE = . ,
+                         CODE_COMMUNE = "COMDEC",
+                         NIVGEO = "REG",
+                         COG_IN = 2016,
+                         COG_NIVGEO = 2019) %>%
+  group_by(REG, date_deces_fmt_2020 ) %>%
+  summarize(nb = sum(cpt) )
+
+cpt_jour_reg_FR <- cpt_jour_reg_2020 %>% mutate(annee = 2020) %>%
+  rbind.data.frame(cpt_jour_reg_20182019 %>% mutate(annee = 2019)) %>%
+  as.data.frame()
+
+cpt_jour_reg_FR.evol <- cpt_jour_reg_FR %>%
+  pivot_wider(names_from = annee,
+              values_from = nb,
+              names_prefix = "nb_") %>%
+  mutate(nb_2019 = replace_na(nb_2019, 0),
+         nb_2020 = replace_na(nb_2020, 0)) %>%
+  group_by(REG, date_deces_fmt_2020) %>%
+  summarise(nb_2019 = sum(nb_2019),
+            nb_2020 = sum(nb_2020)) %>%
+  mutate(diff_nb = nb_2020 - nb_2019) %>%
+  mutate(ratio_nb = nb_2020 / nb_2019,
+         taux_evol = ((nb_2020-nb_2019) / nb_2019)*100,
+         ratio_nb_0 = ratio_nb - 1) %>%
+  mutate(diff_nb_abs = abs(diff_nb)) %>%
+  mutate(diff_nb_signe = case_when(diff_nb>0 ~ "+",diff_nb<0 ~ "-", TRUE ~ "=")) %>%
+  mutate(code = REG) %>%
+  as.data.frame() %>%
+  ajout_libelles_nivgeo(TABLE = .,
+                        NIVGEO_IN ="REG",
+                        COG_NIVGEO = 2019) %>%
+  mutate(name = LIB_REG) %>%
+  filter(!is.na(LIB_REG)) %>%
+  mutate(taux_evol = case_when(taux_evol > 300 ~ 300, 
+                               taux_evol < -50 ~ -50, 
+                               TRUE ~ taux_evol))
+
+
+
+fr_regions_grid3 <- tribble(
+  ~ id,  ~ row, ~ col,  ~ code,   ~ name,  
+1	,6	,1	,"01","Guadeloupe",
+2	,1	,3	,"32","Hauts-de-France",
+3	,2	,3	,"11","Île-de-France",
+4	,6	,2	,"02","Martinique",
+5	,2	,5	,"44","Grand Est",
+6	,2	,2	,"28","Normandie",
+7	,2	,4	,"27","Bourgogne-Franche-Comté",
+8	,2	,1	,"53","Bretagne",
+9	,3	,3	,"24","Centre-Val de Loire",
+10,	3	,2	,"52","Pays de la Loire",
+11,	6	,3	,"03","Guyane",
+12,	3	,4	,"84","Auvergne-Rhône-Alpes",
+13,	4	,2	,"75","Nouvelle-Aquitaine",
+14,	4	,3	,"76","Occitanie",
+15,	4	,4	,"93","Provence-Alpes-Côte d'Azur",
+16,	6	,4	,"04","	Réunion",
+17,	6	,5	,"06","Mayotte",
+18,	5	,5	,"94","	Corse") %>%
+  select(-id)
+
+  ggplot(data = cpt_jour_reg_FR.evol  ,
+         aes(x = date_deces_fmt_2020, y = diff_nb, fill = taux_evol)) +
+    geom_bar(stat = "identity",
+             color = "grey60",
+             size = 0.1,
+             position = "identity") +
+    facet_geo(~ code,
+              grid = fr_regions_grid3,
+              move_axes = TRUE,
+              label = "name") +
+    
+    scale_fill_gradientn(
+      labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x, " %"),
+      name ="Différence en\npourcentage de décès",
+      colors=c("#509ac7","white","#e3040d"),
+      breaks= c(-25,0,50,100,200),
+      values=rescale(c(-25,-15,0,30,60,100,200)),
+      limits=c(-51,301)
+    ) +
+    scale_x_date(name = "",
+                 date_breaks = "7 days",
+                 labels = date_format("%d/%m"),
+                 date_minor_breaks = "1 day") +
+    scale_y_continuous(name = "Différence en nombre de décès",
+                       limits = c(-60, 500),
+                       expand = c(0,0),
+                       labels = function(x) paste0(symnum(x, c(-Inf, 0, Inf), c("", "+")), x),
+                       breaks = seq(0,500,100) 
+    ) +
+    geom_hline(yintercept = 0,  color = "black", size = 0.08) +
+    theme_ipsum() +
+    labs(
+      title = "Différentiel des décès pendant la pandémie Covid-19",
+      subtitle = "Delta entre le nombre de décès par jour du 1er mars au 6 avril (moyenne 2018 et 2019)\net le nombre de décès par jour pendant la même période en 2020.",
+      caption = "Sources : Insee / Fichier individuel comportant des informations sur chaque décès / 17/04/2020"
+    ) +
+    theme(legend.position = c(0.06,0.4),
+          strip.text.x = element_text(size = 9, face = "bold"),
+          axis.text.y = element_text(size = 8),
+          axis.text.x = element_text(size = 8),
+          axis.title.y = element_text(size = 8),
+          legend.background = element_rect(fill = "grey92", color = "grey85", size = 0.2),
+          legend.text = element_text(size = 9),
+          panel.grid.minor = element_blank()) 
+  
+```
