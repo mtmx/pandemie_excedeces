@@ -9,7 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Code du post en ligne [ici](https://mtmx.github.io/blog/deces_pandemie/) réalisé à partir des [données mises en ligne par l'Insee](https://www.insee.fr/fr/information/4470857).
 
-## Librairies R bien utiles :
+## Librairies R bien utiles
 
 * [tidyverse](https://cran.r-project.org/web/packages/tidyverse/index.html) : meta package pour la gestion/transformation/visualisation des données
 * [sf](https://cran.r-project.org/web/packages/tidyverse/index.html) gestion des données spatiales
@@ -21,3 +21,12 @@ Code du post en ligne [ici](https://mtmx.github.io/blog/deces_pandemie/) réalis
 * [areal](https://github.com/slu-openGIS/areal) : interpolation spatiale des stats communales vers grille
 * [cartogram](https://github.com/sjewo/cartogram) : cartogrammes de Dorling
 * [geofacet](https://github.com/hafen/geofacet) : faceting pseudo géographique
+
+
+## Scripts
+
+* **post de blog** : pandemie.Rmd
+* **gif** : anim_carte_bulles.R
+
+
+<img src="https://github.com/mtmx/pandemie_excedeces/blob/master/carto_grid_jour_dorling.gif" width="300" height="300" />
