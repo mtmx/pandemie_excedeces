@@ -24,14 +24,14 @@ DEP_FRMETDOM_2016.s <- DEP_FRMETDOM_2016 %>% ms_simplify(keep = 0.02)
 tmp <- tempdir()
 tmp <- str_replace_all(tmp,"//","/")
 
-if (dir.exists(paste0(tmp,"/2020-04-24_detail"))) {
-  insee_deces <- fread( paste0(tmp, "/2020-04-24_detail/DC_jan2018-avr2020_det.csv"))
+if (dir.exists(paste0(tmp,"/2020-04-30_detail"))) {
+  insee_deces <- fread( paste0(tmp, "/2020-04-30_detail/DC_jan2018-avr2020_det.csv"))
   
 } else {
-  download.file("https://www.insee.fr/fr/statistiques/fichier/4470857/2020-04-24_detail.zip",paste0(tmp,"/2020-04-24_detail.zip"))
-  unzip(paste0(tmp,"/2020-04-24_detail.zip"), exdir = paste0(tmp,"/2020-04-24_detail")) 
-  file.remove(paste0(tmp,"/2020-04-24_detail.zip")) 
-  insee_deces <- fread( paste0(tmp, "/2020-04-24_detail/DC_jan2018-avr2020_det.csv"))
+  download.file("https://www.insee.fr/fr/statistiques/fichier/4470857/2020-04-30_detail.zip",paste0(tmp,"/2020-04-30_detail.zip"))
+  unzip(paste0(tmp,"/2020-04-30_detail.zip"), exdir = paste0(tmp,"/2020-04-30_detail")) 
+  file.remove(paste0(tmp,"/2020-04-30_detail.zip")) 
+  insee_deces <- fread( paste0(tmp, "/2020-04-30_detail/DC_jan2018-avr2020_det.csv"))
   
 }
 
@@ -208,7 +208,7 @@ f_out_img_dor <- function(jour){
 }
 
 # sortie pour tous lesj ours
-seq(as.Date("2020-03-03"),as.Date("2020-04-10"), by = 1) %>% map(f_out_img_dor)
+seq(as.Date("2020-03-03"),as.Date("2020-04-16"), by = 1) %>% map(f_out_img_dor)
 
 # création du gif
 
