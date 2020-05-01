@@ -29,4 +29,4 @@ Code du post en ligne [ici](https://mtmx.github.io/blog/deces_pandemie/) réalis
 * **gif** : anim_carte_bulles.R
 
 
-<img src="https://github.com/mtmx/pandemie_excedeces/blob/master/carto_grid_jour_dorling.gif" width="300" height="300" />
+<img src="https://github.com/mtmx/pandemie_excedeces/blob/master/carto_grid_jour_dorling_30042020.gif" width="300" height="300" />
